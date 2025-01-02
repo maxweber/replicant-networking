@@ -2,9 +2,12 @@
   (:require [domkm.silk :as silk]
             [lambdaisland.uri :as uri]))
 
-(def routes
+(defn make-routes [pages]
   (silk/routes
-   [[:pages/frontpage []]]))
+   (mapv
+    (fn [{:keys [page-id route]}]
+      [page-id route])
+    pages)))
 
 (defn url->location [routes url]
   (let [uri (cond-> url (string? url) uri/uri)]

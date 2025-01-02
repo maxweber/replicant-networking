@@ -1,16 +1,19 @@
 (ns toil.core
-  (:require [clojure.walk :as walk]
+  (:require [cljs.reader :as reader]
+            [clojure.walk :as walk]
             [replicant.alias :as alias]
             [replicant.dom :as r]
+            [toil.frontpage :as frontpage]
+            [toil.query :as query]
             [toil.router :as router]
-            [toil.ui :as ui]))
+            [toil.ui :as ui]
+            [toil.user :as user]))
 
 (defn routing-anchor [attrs children]
   (let [routes (-> attrs :replicant/alias-data :routes)]
     (into [:a (cond-> attrs
                 (:ui/location attrs)
-                (assoc :href (router/location->url routes
-                                                   (:ui/location attrs))))]
+                (assoc :href (router/location->url routes (:ui/location attrs))))]
           children)))
 
 (alias/register! :ui/a routing-anchor)
@@ -20,9 +23,9 @@
           (.closest "a")
           (.getAttribute "href")))
 
-(defn get-current-location []
+(defn get-current-location [routes]
   (->> js/location.pathname
-       (router/url->location router/routes)))
+       (router/url->location routes)))
 
 (defn interpolate-actions [event actions]
   (walk/postwalk
@@ -33,11 +36,44 @@
        x))
    actions))
 
+(defn query-backend [store query]
+  (swap! store query/send-request (js/Date.) query)
+  (-> (js/fetch "/query" #js {:method "POST"
+                              :body (pr-str query)})
+      (.then #(.text %))
+      (.then reader/read-string)
+      (.then #(swap! store query/receive-response (js/Date.) query %))
+      (.catch #(swap! store query/receive-response (js/Date.) query {:error (.-message %)}))))
+
 (defn execute-actions [store actions]
   (doseq [[action & args] actions]
     (case action
       :store/assoc-in (apply swap! store assoc-in args)
+      :data/query (apply query-backend store args)
       (println "Unknown action" action "with arguments" args))))
+
+(def pages
+  [user/page
+   frontpage/page])
+
+(def by-page-id
+  (->> pages
+       (map (juxt :page-id identity))
+       (into {})))
+
+(defn get-render-f [state]
+  (or (get-in by-page-id [(-> state :location :location/page-id) :render])
+      ui/render-page))
+
+(defn get-location-load-actions [location]
+  (when-let [f (get-in by-page-id [(:location/page-id location) :on-load])]
+    (f location)))
+
+(defn navigate! [store location]
+  (let [current-location (:location @store)]
+    (swap! store assoc :location location)
+    (when (not= current-location location)
+      (execute-actions store (get-location-load-actions location)))))
 
 (defn route-click [e store routes]
   (let [href (find-target-href e)]
@@ -46,30 +82,31 @@
       (if (router/essentially-same? location (:location @store))
         (.replaceState js/history nil "" href)
         (.pushState js/history nil "" href))
-      (swap! store assoc :location location))))
+      (navigate! store location))))
 
 (defn main [store el]
-  (add-watch
-   store ::render
-   (fn [_ _ _ state]
-     (r/render el (ui/render-page state) {:alias-data {:routes router/routes}})))
+  (let [routes (router/make-routes pages)]
+    (add-watch
+     store ::render
+     (fn [_ _ _ state]
+       (let [f (get-render-f state)]
+         (r/render el (f state) {:alias-data {:routes routes}}))))
 
-  (r/set-dispatch!
-   (fn [event-data actions]
-     (->> actions
-          (interpolate-actions
-           (:replicant/dom-event event-data))
-          (execute-actions store))))
+    (r/set-dispatch!
+     (fn [event-data actions]
+       (->> actions
+            (interpolate-actions
+             (:replicant/dom-event event-data))
+            (execute-actions store))))
 
-  (js/document.body.addEventListener
-   "click"
-   #(route-click % store router/routes))
+    (js/document.body.addEventListener
+     "click"
+     #(route-click % store routes))
 
-  (js/window.addEventListener
-   "popstate"
-   (fn [_] (swap! store assoc :location (get-current-location))))
+    (js/window.addEventListener
+     "popstate"
+     (fn [_] (navigate! store (get-current-location routes))))
 
-  ;; Trigger the initial render
-  (swap! store assoc
-         :app/started-at (js/Date.)
-         :location (get-current-location)))
+    ;; Trigger the initial render
+    (navigate! store (get-current-location routes))
+    (swap! store assoc :app/started-at (js/Date.))))
