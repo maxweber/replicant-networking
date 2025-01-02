@@ -3,6 +3,7 @@
             [clojure.walk :as walk]
             [replicant.alias :as alias]
             [replicant.dom :as r]
+            [toil.command :as command]
             [toil.frontpage :as frontpage]
             [toil.query :as query]
             [toil.router :as router]
@@ -45,11 +46,26 @@
       (.then #(swap! store query/receive-response (js/Date.) query %))
       (.catch #(swap! store query/receive-response (js/Date.) query {:error (.-message %)}))))
 
+(declare execute-actions)
+
+(defn issue-command [store command & [{:keys [on-success]}]]
+  (swap! store command/issue-command (js/Date.) command)
+  (-> (js/fetch "/command" #js {:method "POST"
+                                :body (pr-str command)})
+      (.then #(.text %))
+      (.then reader/read-string)
+      (.then (fn [res]
+               (swap! store command/receive-response (js/Date.) command res)
+               (when on-success
+                 (execute-actions store on-success))))
+      (.catch #(swap! store command/receive-response (js/Date.) command {:error (.-message %)}))))
+
 (defn execute-actions [store actions]
   (doseq [[action & args] actions]
     (case action
       :store/assoc-in (apply swap! store assoc-in args)
       :data/query (apply query-backend store args)
+      :data/command (apply issue-command store args)
       (println "Unknown action" action "with arguments" args))))
 
 (def pages

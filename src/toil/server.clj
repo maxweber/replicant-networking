@@ -1,5 +1,6 @@
 (ns toil.server
-  (:require [ring.adapter.jetty :as jetty]
+  (:require [clojure.string :as str]
+            [ring.adapter.jetty :as jetty]
             [ring.middleware.resource :refer [wrap-resource]]
             [ring.util.response :as response]))
 
@@ -69,6 +70,9 @@
     :user/family-name "Lee"
     :user/email "carol.lee@acme-corp.com"}])
 
+(defn random-id []
+  (str/join (take 5 (str (random-uuid)))))
+
 (defn query [req]
   (if-let [query (try
                    (read-string (slurp (:body req)))
@@ -95,6 +99,48 @@
         {:error "Failed while executing query"}))
     {:error "Unparsable query"}))
 
+(defn create-todo [todo]
+  (if (and (:todo/title todo)
+             (:todo/created-by todo))
+    (do
+      (swap! todos conj {:todo/id (random-id)
+                         :todo/title (:todo/title todo)
+                         :todo/created-by (:todo/created-by todo)
+                         :todo/done? false
+                         :todo/created-at (str (java.time.Instant/now))})
+      {:success? true})
+    {:success? false}))
+
+(defn toggle-todo [{:keys [todo/id]}]
+  (swap! todos (fn [items]
+                 (for [item items]
+                   (cond-> item
+                     (= id (:todo/id item))
+                     (update :todo/done? not)))))
+  {:success? true})
+
+(defn handle-command [req]
+  (if-let [command (try
+                   (read-string (slurp (:body req)))
+                   (catch Exception e
+                     (println "Failed to parse command body")
+                     (prn e)))]
+    (try
+      (case (:command/kind command)
+        :command/create-todo
+        (create-todo (:command/data command))
+
+        :command/toggle-todo
+        (toggle-todo (:command/data command))
+
+        {:error "Unknown command type"
+         :command command})
+      (catch Exception e
+        (println "Failed to handle command")
+        (prn e)
+        {:error "Failed while handling command"}))
+    {:error "Unparsable command"}))
+
 (defn handler [{:keys [uri] :as req}]
   (cond
     (= "/" uri)
@@ -104,6 +150,11 @@
     {:status 200
      :headers {"content-type" "application/edn"}
      :body (pr-str (query req))}
+
+    (= "/command" uri)
+    {:status 200
+     :headers {"content-type" "application/edn"}
+     :body (pr-str (handle-command req))}
 
     :else
     {:status 404
