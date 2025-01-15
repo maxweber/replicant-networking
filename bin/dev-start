@@ -1,0 +1,11 @@
+#!/bin/bash
+
+make node_modules
+
+make shadow &
+
+make tailwind &
+
+echo "open http://localhost:8089"
+
+clojure -M:dev -e "(require 'toil.server) (toil.server/start-server 8089)"
