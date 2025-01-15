@@ -7,3 +7,7 @@ tutorial. To get it up and running:
 2. Run `make tailwind` to start the tailwind build.
 3. Start a Clojure REPL, and evaluate `(def server (start-server 8088))` in the
    comment block of `toil.server`.
+
+Or just run:
+
+    bin/dev-start
