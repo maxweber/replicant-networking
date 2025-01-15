@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "daisyui": "^4.12.23"
+  },
+  "devDependencies": {
+    "shadow-cljs": "^2.28.20"
   }
 }
